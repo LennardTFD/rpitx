@@ -168,7 +168,7 @@ uint32_t encodeCodeword(uint32_t msg)
  * initial_offset indicates which word in the current batch the function is
  * beginning at, so that it can insert SYNC words at appropriate locations.
  */
-uint32_t encodeASCII(uint32_t initial_offset, char *str, uint32_t *out)
+uint32_t encodeASCII(uint32_t initial_offset, char *str, size_t messageLength, uint32_t *out)
 {
     //Number of words written to *out
     uint32_t numWordsWritten = 0;
@@ -182,10 +182,13 @@ uint32_t encodeASCII(uint32_t initial_offset, char *str, uint32_t *out)
     //Position of current word in the current batch
     uint32_t wordPosition = initial_offset;
 
-    while (*str != 0)
+    int idx = 0;
+
+    // Iterate over length. Also allow Null Bytes inside binary data
+    while (idx < messageLength)
     {
-        unsigned char c = *str;
-        str++;
+        unsigned char c = str[idx];
+        idx++;
         //Encode the character bits backwards
         for (int i = 0; i < TEXT_BITS_PER_CHAR; i++)
         {
@@ -366,7 +369,7 @@ int addressOffset(int address)
  * (*out) is the destination to which the transmission will be written.
  */
 bool numeric = false;
-void encodeTransmission(int repeatIndex, int address, int fb, char *message, uint32_t *out)
+void encodeTransmission(int repeatIndex, int address, int fb, char *message, size_t messageLength, uint32_t *out)
 {
 
     //Encode preamble
@@ -407,7 +410,7 @@ void encodeTransmission(int repeatIndex, int address, int fb, char *message, uin
     }
     else
     {
-        out += encodeASCII(addressOffset(address) + 1, message, out);
+        out += encodeASCII(addressOffset(address) + 1, message, messageLength, out);
     }
 
     //Finally, write an IDLE word indicating the end of the message
@@ -532,11 +535,11 @@ void SendFsk(uint64_t Freq, bool Inverted, int SR, bool debug, uint32_t *Message
     fsktest.SetSymbols(TabSymbol, Sym);
 
     /*for(i=0;i<FiFoSize;i++)
-		{
-			TabSymbol[i]=1;
-		}	
-		fsktest.SetSymbols(TabSymbol,FiFoSize);
-		sleep(1);*/
+                {
+                        TabSymbol[i]=1;
+                }
+                fsktest.SetSymbols(TabSymbol,FiFoSize);
+                sleep(1);*/
 
     fsktest.stop();
 }
@@ -643,15 +646,18 @@ int main(int argc, char *argv[]) {
     uint32_t *completeTransmission =
         (uint32_t *)malloc(sizeof(uint32_t) * 0);
     for (;;) {
-        if (fgets(line, sizeof(line), stdin) == NULL)
-            break;
+        size_t inputLength = fread(line, 1, sizeof(line), stdin);
+        if(inputLength == 0) break;
+        //printf("Input Length: %d\n", inputLength);
 
         size_t colonIndex = 0;
         for (size_t i = 0; i < sizeof(line); i++) {
-            if (line[i] == 0) {
-                fputs("Malformed Line!", stderr);
-                return 1;
-            }
+// Disable malformed Line error when working with binary data
+//          printf("%c = %x\n", line[i], line[i]);
+//            if (line[i] == 0 && 1==2) {
+//                fputs("Malformed Line!", stderr);
+//                return 1;
+//            }
             if (line[i] == ':') {
                 colonIndex = i;
                 break;
@@ -660,7 +666,7 @@ int main(int argc, char *argv[]) {
 
         int address = (int)strtol(line, &endptr, 10);
         char *message = line + colonIndex + 1;
-
+        size_t messageTextLength = inputLength - colonIndex - 1; // Calculate actual length of given Message
         // If address is followed by a letter, this set the function bits
         switch (*endptr) {
             case 'a':
@@ -684,12 +690,12 @@ int main(int argc, char *argv[]) {
         for (int x = 0; x < REPEAT_COUNT; x++) {
             size_t messageLength = numeric
                                        ? numericMessageLength(msgIndex, address, strlen(message))
-                                       : textMessageLength(msgIndex, address, strlen(message));
+                                       : textMessageLength(msgIndex, address, messageTextLength);
 
             uint32_t *transmission =
                 (uint32_t *)malloc(sizeof(uint32_t) * messageLength);
 
-            encodeTransmission(msgIndex, address, SetFunctionBits, message, transmission);
+            encodeTransmission(msgIndex, address, SetFunctionBits, message, messageTextLength, transmission);
             size_t beforeLength = completeLength + 0;
             fprintf(stderr, "DEBUG DATA = I=%d   P=%p T=%d L=%d\n", msgIndex, completeTransmission, completeLength, messageLength);
             completeLength += messageLength;
